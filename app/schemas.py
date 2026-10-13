@@ -1,16 +1,19 @@
-"""Request/response models and validation rules; no database access here."""
+# -*- coding: utf-8 -*-
+"""Pydantic schemas for the Cars CRUD app (unit-test target)."""
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+# A text field that is stripped of surrounding whitespace and cannot be blank.
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class CarInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    make: str = Field(min_length=1, max_length=60)
-    model: str = Field(min_length=1, max_length=60)
-    year: int = Field(strict=True, ge=1886, le=2100)
-    color: str = Field(default="", max_length=40)
+    make: NonBlank
+    model: NonBlank
+    year: int = Field(ge=1886, description="Model year; must be a plausible automobile year.")
+    color: NonBlank
 
 
 class Car(CarInput):
-    id: int = Field(gt=0)
+    id: int

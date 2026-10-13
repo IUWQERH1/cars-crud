@@ -1,1 +1,1 @@
-"""A small car CRUD application."""
+# -*- coding: utf-8 -*-

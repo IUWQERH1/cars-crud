@@ -1,75 +1,41 @@
-"""A real server and a fresh browser context for every E2E test."""
-
-import os
+# -*- coding: utf-8 -*-
 import socket
 import threading
 import time
-from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 import uvicorn
-
-from app.main import create_app
-
-
-def pytest_addoption(parser):
-    parser.addoption("--headed", action="store_true", help="Show the E2E browser window")
+from playwright.sync_api import sync_playwright
 
 
 @pytest.fixture
-def live_server(tmp_path: Path) -> Iterator[str]:
-    # Reserve a free port instead of hard-coding 8000 or racing another process.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        host, port = sock.getsockname()
-        config = uvicorn.Config(
-            create_app(tmp_path / "browser-cars.db"),
-            host=host,
-            port=port,
-            log_level="error",
-            ws="none",
-        )
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-        thread.start()
-        try:
-            deadline = time.monotonic() + 10
-            while not server.started:
-                if not thread.is_alive() or time.monotonic() > deadline:
-                    raise RuntimeError("The E2E server did not start")
-                time.sleep(0.02)
-            yield f"http://{host}:{port}"
-        finally:
-            server.should_exit = True
-            thread.join(timeout=10)
-            if thread.is_alive():
-                raise RuntimeError("The E2E server did not stop")
+def live_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("CARS_DB_PATH", str(tmp_path / "cars.db"))
 
+    from app.main import app
 
-@pytest.fixture(scope="session")
-def browser(pytestconfig):
-    # Import lazily so non-E2E tests do not need a browser installation.
-    from playwright.sync_api import sync_playwright
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
 
-    with sync_playwright() as playwright:
-        options = {"headless": not pytestconfig.getoption("--headed")}
-        executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
-        if executable:
-            options["executable_path"] = executable
-        browser = playwright.chromium.launch(**options)
-        try:
-            yield browser
-        finally:
-            browser.close()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.05)
+
+    yield f"http://127.0.0.1:{port}"
+
+    server.should_exit = True
+    thread.join(timeout=5)
 
 
 @pytest.fixture
-def page(browser):
-    # No cookies, local storage, or browser state is shared between tests.
-    context = browser.new_context()
-    page = context.new_page()
-    try:
-        yield page
-    finally:
-        context.close()
+def page():
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        pg = browser.new_page()
+        yield pg
+        browser.close()
